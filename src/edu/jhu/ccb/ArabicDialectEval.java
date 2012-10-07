@@ -17,7 +17,8 @@ public class ArabicDialectEval implements Evaluator {
         if (control == null) {
             control = "msa";
 	}
-        return userResponse.equals(control);
+	
+        return userResponse.contains(control);
 
     }
 

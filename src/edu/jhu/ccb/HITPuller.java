@@ -66,9 +66,9 @@ public class HITPuller {
 	List<List<QuestionFormAnswersType.AnswerType>> results = new LinkedList<List<QuestionFormAnswersType.AnswerType>>();
 
 	for (String hitId : hitIds) {
-	    
+	   
 	    List<List<QuestionFormAnswersType.AnswerType>> tmp = reviewAnswers(hitId);
-
+	    
 	    if (tmp != null) {
 		results.addAll(tmp);
 	    }
@@ -113,69 +113,73 @@ public class HITPuller {
      */
 
     private List<List<QuestionFormAnswersType.AnswerType>> reviewAnswers(String hitId) {
+      
+	
+	List<List<QuestionFormAnswersType.AnswerType>> results = new LinkedList<List<QuestionFormAnswersType.AnswerType>>();
+
 
         try { 
 	    Assignment[] assignments = service.getAllAssignmentsForHIT(hitId);
+
 	    
-
-	    List<List<QuestionFormAnswersType.AnswerType>> results = new LinkedList<List<QuestionFormAnswersType.AnswerType>>();
 	    for (Assignment assignment : assignments) {
-
-		if (assignment.getAssignmentStatus() == AssignmentStatus.Submitted) {
-
+				
+		//hack to get approved hits
+		if (assignment.getAssignmentStatus() == AssignmentStatus.Approved) {
+		    
 		    //By default, answers are specified in XML
 		    String answerXML = assignment.getAnswer();
-		QuestionFormAnswers qfa = RequesterService.parseAnswers(answerXML);
+		    QuestionFormAnswers qfa = RequesterService.parseAnswers(answerXML);
 
-		List<QuestionFormAnswersType.AnswerType> answers = (List<QuestionFormAnswersType.AnswerType>) qfa.getAnswer();
+		    List<QuestionFormAnswersType.AnswerType> answers = (List<QuestionFormAnswersType.AnswerType>) qfa.getAnswer();
+		
+		
+		    QuestionFormAnswersType.AnswerType workerid = new com.amazonaws.mturk.dataschema.impl.QuestionFormAnswersTypeImpl.AnswerTypeImpl();
+		    workerid.setQuestionIdentifier("workerid");
+		    workerid.setFreeText(assignment.getWorkerId());
 
 		
-		QuestionFormAnswersType.AnswerType workerid = new com.amazonaws.mturk.dataschema.impl.QuestionFormAnswersTypeImpl.AnswerTypeImpl();
-		workerid.setQuestionIdentifier("workerid");
-		workerid.setFreeText(assignment.getWorkerId());
-
+		    QuestionFormAnswersType.AnswerType hitid = new com.amazonaws.mturk.dataschema.impl.QuestionFormAnswersTypeImpl.AnswerTypeImpl();
+		    hitid.setQuestionIdentifier("hitid");
+		    hitid.setFreeText(assignment.getHITId());
 		
-		QuestionFormAnswersType.AnswerType hitid = new com.amazonaws.mturk.dataschema.impl.QuestionFormAnswersTypeImpl.AnswerTypeImpl();
-		hitid.setQuestionIdentifier("hitid");
-		hitid.setFreeText(assignment.getHITId());
+
+		    QuestionFormAnswersType.AnswerType assignmentid = new com.amazonaws.mturk.dataschema.impl.QuestionFormAnswersTypeImpl.AnswerTypeImpl();
+		    assignmentid.setQuestionIdentifier("assignmentid");
+		    assignmentid.setFreeText(assignment.getAssignmentId());
 
 
-		QuestionFormAnswersType.AnswerType assignmentid = new com.amazonaws.mturk.dataschema.impl.QuestionFormAnswersTypeImpl.AnswerTypeImpl();
-		assignmentid.setQuestionIdentifier("assignmentid");
-		assignmentid.setFreeText(assignment.getAssignmentId());
-
-
-		QuestionFormAnswersType.AnswerType autoApproval = new com.amazonaws.mturk.dataschema.impl.QuestionFormAnswersTypeImpl.AnswerTypeImpl();
-		autoApproval.setQuestionIdentifier("auto_approval");
-		autoApproval.setFreeText(assignment.getAutoApprovalTime().toString());
+		    QuestionFormAnswersType.AnswerType autoApproval = new com.amazonaws.mturk.dataschema.impl.QuestionFormAnswersTypeImpl.AnswerTypeImpl();
+		    autoApproval.setQuestionIdentifier("auto_approval");
+		    autoApproval.setFreeText(assignment.getAutoApprovalTime().toString());
 		
-		QuestionFormAnswersType.AnswerType acceptTime = new com.amazonaws.mturk.dataschema.impl.QuestionFormAnswersTypeImpl.AnswerTypeImpl();
-		acceptTime.setQuestionIdentifier("accept_time");
-		acceptTime.setFreeText(assignment.getAcceptTime().toString());
+		    QuestionFormAnswersType.AnswerType acceptTime = new com.amazonaws.mturk.dataschema.impl.QuestionFormAnswersTypeImpl.AnswerTypeImpl();
+		    acceptTime.setQuestionIdentifier("accept_time");
+		    acceptTime.setFreeText(assignment.getAcceptTime().toString());
+		    
+		    QuestionFormAnswersType.AnswerType submitTime = new com.amazonaws.mturk.dataschema.impl.QuestionFormAnswersTypeImpl.AnswerTypeImpl();
+		    submitTime.setQuestionIdentifier("submit_time");
+		    submitTime.setFreeText(assignment.getSubmitTime().toString());
+		    
+	      
+		    
+		    answers.add(workerid);
+		    answers.add(hitid);
+		    answers.add(assignmentid);
+		    answers.add(autoApproval);
+		    answers.add(acceptTime);
+		    answers.add(submitTime);
 
-		QuestionFormAnswersType.AnswerType submitTime = new com.amazonaws.mturk.dataschema.impl.QuestionFormAnswersTypeImpl.AnswerTypeImpl();
-		submitTime.setQuestionIdentifier("submit_time");
-		submitTime.setFreeText(assignment.getSubmitTime().toString());
-
-
-
-		answers.add(workerid);
-		answers.add(hitid);
-		answers.add(assignmentid);
-		answers.add(autoApproval);
-		answers.add(acceptTime);
-		answers.add(submitTime);
-
-		results.add(answers);
-		
-		return results;
+		    results.add(answers);
 		}
+	
+		
 	    }
 	} catch (ObjectDoesNotExistException ex) {
 	    System.err.println(hitId + " does not exist. Skipping.");
 	}
 
-	return null;
+	return results;
 
 
     }

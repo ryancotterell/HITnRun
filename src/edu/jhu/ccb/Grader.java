@@ -3,7 +3,13 @@ package edu.jhu.ccb;
 import java.util.Map;
 import java.util.HashMap;
 
+import java.util.Calendar;
+import java.util.GregorianCalendar;
+
 import java.net.UnknownHostException;
+
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.mongodb.Mongo;
 import com.mongodb.DB;
@@ -32,6 +38,11 @@ public class Grader {
     private static final String approved = "approved";
     private static final String upload = "upload";
     private static final String rejected = "rejected";
+    private static final String error = "error";
+
+
+    private static final String approvedPending = "approved_pending";
+    private static final String rejectedPending = "rejected_pending";
     
     private static final String controls = "controls";
 
@@ -41,8 +52,13 @@ public class Grader {
     private static final String rejectionMessage = "Your HIT has been rejected because you did not meet our gold standard. If you feel you were rejected without just cause please send us an email";
 
     
-    private static final int controlMinThreshold = 2;
+    private static final int controlMinThreshold = 20; // this is double the number of HITs    
     private static final double percentageCorrectThreshold = .5;
+
+    //when the HIT is this close to being autoapproved (in miliseconds) the 
+    //a decision will be made based on performance regardless of the number of
+    //HITs the turker performed
+    private static final int autoApproveThreshold = 60 * 60 * 60 * 60 * 24 * 2; //two days (in milliseconds) 
 
     private static final long expirationIncrement = 60 * 60 * 24 * 3; //three days
 
@@ -54,11 +70,19 @@ public class Grader {
     private DBCollection controlColl;
     private DBCollection approvedColl;
     private DBCollection rejectedColl;
+    //these are for the simulation of approval and rejection
+    private DBCollection approvedPendingColl;
+    private DBCollection rejectedPendingColl;
+
     private DBCollection uploadColl;
+    private DBCollection errorColl;
 
     private RequesterService service;
 
-    public Grader() throws UnknownHostException {
+    private Evaluator eval;
+
+    public Grader(Evaluator eval) throws UnknownHostException {
+	this.eval = eval;
 	percentCorrectStorage = new HashMap<String,Double>();
 
 	m = new Mongo();
@@ -69,9 +93,13 @@ public class Grader {
 	approvedColl = db.getCollection(approved);
 	uploadColl = db.getCollection(upload);
 
+
+	approvedPendingColl = db.getCollection(approvedPending);
+	rejectedPendingColl = db.getCollection(rejectedPending);
+	//this collection is for hits which caued an exception during processing
+	errorColl = db.getCollection(error);
+
 	service = new RequesterService(new PropertiesClientConfig(configPath));
-
-
 
 	//extract controls for grading
 	extractControls();
@@ -80,6 +108,9 @@ public class Grader {
        
     }
 
+    /**
+     * Repost a HIT that failed the grading criteria
+     */
     private void repost() {
 	DBCursor cursor = uploadColl.find();
 
@@ -96,24 +127,30 @@ public class Grader {
 
     }
 
+    /**
+     * Grades the workers based on extracted controls
+     *
+     */
     private void grade() {
 	DBCursor cursor = submittedColl.find();
 	
 
 	for (DBObject doc : cursor) {
 	    String workerid = (String)doc.get("workerid");
-	
+	    String cal = (String)doc.get("auto_approval");
 	    //can be graded - there should also be a time condition 
-	    if (controlCount(workerid) >= controlMinThreshold) {
+	    
+	    if (controlCount(workerid) >= controlMinThreshold || forceJudgement(cal) ) {
 
 		String assignmentId = (String)doc.get("assignmentid");
+		
 
 		if (percentageCorrect(workerid) >= percentageCorrectThreshold) {
 		    //approved
 		    try {
-			service.approveAssignment(assignmentId,approvalMessage);
+			//service.approveAssignment(assignmentId,approvalMessage);
 			submittedColl.remove(doc);
-			approvedColl.insert(doc);
+			approvedPendingColl.insert(doc);
 
 		    } catch (ServiceException ex) {
 			System.err.println("Could not approve assignment " + assignmentId + ".");
@@ -123,15 +160,61 @@ public class Grader {
 		    //rejected
 		    
 		    try {
-			service.rejectAssignment(assignmentId,rejectionMessage);
+			//service.rejectAssignment(assignmentId,rejectionMessage);
 			submittedColl.remove(doc);
-			uploadColl.insert(doc);
+
+			rejectedPendingColl.insert(doc);
+
+			//uploadColl.insert(doc);
 		    } catch (ServiceException ex) {
 			System.err.println("Could not reject assignment  " + assignmentId + ".");
 		    }
 		}				
-	    }    
+	    } 
 	}
+    }
+
+    /**
+     * Returns the true is the HIT will be
+     * autoapproved imminently and it a judgement
+     * should be made about whether to autoapprove
+     * immediately
+     * @param cal a calendar toString
+     */
+    private boolean forceJudgement(String cal) {
+	
+	String yearRegex = ",YEAR=(\\d\\d\\d\\d),";
+	String monthRegex = ",MONTH=(\\d*?),";
+	String dayRegex = ",DAY_OF_MONTH=(\\d*?),";
+	String unixRegex = "time=(\\d*?),";
+
+	Pattern yearPattern = Pattern.compile(yearRegex);
+	Pattern monthPattern = Pattern.compile(monthRegex);
+	Pattern dayPattern = Pattern.compile(dayRegex);
+	Pattern unixPattern = Pattern.compile(unixRegex);
+
+	Matcher mYear = yearPattern.matcher(cal);
+	Matcher mMonth = monthPattern.matcher(cal);
+	Matcher mDay = dayPattern.matcher(cal);
+	Matcher mUnix = unixPattern.matcher(cal);
+
+
+	long unix = 0;
+	
+	if (mUnix.find()) {
+	    unix = Long.parseLong(mUnix.group(1));
+	} else {
+	    //should throw an exception
+	    System.out.println(cal);
+	}
+
+	Calendar cur = new GregorianCalendar();
+	long diff = unix - cur.getTimeInMillis();
+	
+	if (diff > autoApproveThreshold) {
+	    return false;
+	} 
+	return true;
     }
 
     /**
@@ -155,7 +238,7 @@ public class Grader {
     private double percentageCorrect(String workerid) {
 	
 	//check whether it has been calculated before
-	//dynamic programming-esque
+
 
 	if (percentCorrectStorage.keySet().contains(workerid)) {
 	    return percentCorrectStorage.get(workerid);
@@ -196,53 +279,49 @@ public class Grader {
 	//pulls out the controls
 	for (DBObject doc : cursor) {
 
-	    int[] controls = {Integer.parseInt((String)doc.get("control1")), Integer.parseInt((String)doc.get("control2"))};
-	    String[] controlClasses = {(String)doc.get("control_class1"),(String)doc.get("control_class2")};  
-	    String[] controlSentences = {(String)doc.get("sentence" + controls[0]), (String)doc.get("sentence" + controls[1])};
-	    String[] controlSentenceIds = {(String)doc.get("sentence" + controls[0]), (String)doc.get("sentence" + controls[1])};
-	    String[] controlDLevels = {(String)doc.get("DLevel" + controls[0]), (String)doc.get("DLevel" + controls[1])};
-	    String[] controlDClasses = {(String)doc.get("DClass" + controls[0]),(String)doc.get("DClass" + controls[1])};
-
-	    boolean[] isCorrect = {evaluate(controlClasses[0],controlDClasses[0]), evaluate(controlClasses[0],controlDClasses[1])};
-
-	    BasicDBObject[] controlDocs = {new BasicDBObject(), new BasicDBObject()};
-
-	    for (int i = 0; i < 2; ++i) {
-		controlDocs[i].put("control_sentence",controlSentences[i]);
-		controlDocs[i].put("control_class",controlClasses[i]);
+	    try {
 		
-		if (controlDClasses[i] != null) {
-		    controlDocs[i].put("control_dclass",controlDClasses[i]);
-		} else {
-		    controlDocs[i].put("control_dclass","msa");
+		int[] controls = {Integer.parseInt((String)doc.get("control1")), Integer.parseInt((String)doc.get("control2"))};
+		String[] controlClasses = {(String)doc.get("control_class1"),(String)doc.get("control_class2")};  
+		String[] controlSentences = {(String)doc.get("sentence" + controls[0]), (String)doc.get("sentence" + controls[1])};
+		String[] controlSentenceIds = {(String)doc.get("sentence" + controls[0]), (String)doc.get("sentence" + controls[1])};
+		String[] controlDLevels = {(String)doc.get("DLevel" + controls[0]), (String)doc.get("DLevel" + controls[1])};
+		String[] controlDClasses = {(String)doc.get("DClass" + controls[0]),(String)doc.get("DClass" + controls[1])};
+		
+		boolean[] isCorrect = {eval.evaluate(controlClasses[0],controlDClasses[0]), eval.evaluate(controlClasses[0],controlDClasses[1])};
+		
+		BasicDBObject[] controlDocs = {new BasicDBObject(), new BasicDBObject()};
+		
+		for (int i = 0; i < 2; ++i) {
+		    controlDocs[i].put("control_sentence",controlSentences[i]);
+		    controlDocs[i].put("control_class",controlClasses[i]);
+		    
+		    if (controlDClasses[i] != null) {
+			controlDocs[i].put("control_dclass",controlDClasses[i]);
+		    } else {
+			controlDocs[i].put("control_dclass","msa");
+		    }
+		    controlDocs[i].put("correct",isCorrect[i]);
+		    
+		    controlDocs[i].put("workerid",(String)doc.get("workerid"));
+		    controlDocs[i].put("assignmentid",(String)doc.get("assignmentid"));
+		    controlDocs[i].put("hitid",(String)doc.get("hitid"));
+		    
+		    if (controlColl.find(controlDocs[i]).hasNext() == false) {
+			
+			controlColl.insert(controlDocs[i]);
+		    }
 		}
-		controlDocs[i].put("correct",isCorrect[i]);
-
-		controlDocs[i].put("workerid",(String)doc.get("workerid"));
-		controlDocs[i].put("assignmentid",(String)doc.get("assignmentid"));
-		controlDocs[i].put("hitid",(String)doc.get("hitid"));
-
-		if (controlColl.find(controlDocs[i]).hasNext() == false) {
-		   
-		    controlColl.insert(controlDocs[i]);
-		}
+	    } catch (NumberFormatException nfe) {
+		submittedColl.remove(doc);
+		errorColl.insert(doc);
 	    }
 	}	
     }
 
 
-    /**
-     * To account for evaluation metrics that are not strict equality
-     *
-     */
-    private boolean evaluate(String user_response,String correct_response) {
-	//return user_response.equals(correct_response);
-	return true;
-    }
-
-
     public static void main(String[] args) throws UnknownHostException {
-	new Grader();
+	new Grader(new ArabicDialectEval());
     }
     
 }
