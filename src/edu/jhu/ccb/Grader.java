@@ -53,7 +53,9 @@ public class Grader {
 
     
     private static final int controlMinThreshold = 20; // this is double the number of HITs    
-    private static final double percentageCorrectThreshold = .5;
+    private static final double percentageCorrectThreshold = .8;
+
+    private static final double percentagePartialThreshold = .6;
 
     //when the HIT is this close to being autoapproved (in miliseconds) the 
     //a decision will be made based on performance regardless of the number of
@@ -81,9 +83,19 @@ public class Grader {
 
     private Evaluator eval;
 
+    private Map<String,Integer> numApproved;
+    private Map<String,Integer> numSeen;
+
     public Grader(Evaluator eval) throws UnknownHostException {
+
+
 	this.eval = eval;
 	percentCorrectStorage = new HashMap<String,Double>();
+
+
+	//this is to correctly distribute partial approval
+	numApproved = new HashMap<String,Integer>();
+	numSeen = new HashMap<String,Integer>();
 
 	m = new Mongo();
 	db = m.getDB(db_name);
@@ -103,7 +115,7 @@ public class Grader {
 
 	//extract controls for grading
 	extractControls();
-
+	
 	grade();
        
     }
@@ -111,6 +123,7 @@ public class Grader {
     /**
      * Repost a HIT that failed the grading criteria
      */
+    /*
     private void repost() {
 	DBCursor cursor = uploadColl.find();
 
@@ -118,14 +131,14 @@ public class Grader {
 	    String hitid = (String)doc.get("hitid");
 	    
 	    try {
-		service.extendHIT(hitid,1,expirationIncrement);
+		//service.extendHIT(hitid,1,expirationIncrement);
 		uploadColl.remove(doc);
 	    } catch (ServiceException ex) {
 		System.out.println("Could not repost the hit with HITId " + hitid + ".");
 	    }
 	}
 
-    }
+	}*/
 
     /**
      * Grades the workers based on extracted controls
@@ -147,28 +160,69 @@ public class Grader {
 
 		if (percentageCorrect(workerid) >= percentageCorrectThreshold) {
 		    //approved
+
+		    // System.out.println(workerid);
 		    try {
-			//service.approveAssignment(assignmentId,approvalMessage);
+			System.out.println(workerid + "\tApproved\t" + percentageCorrect(workerid));
+		       	service.approveAssignment(assignmentId,approvalMessage);
 			submittedColl.remove(doc);
-			approvedPendingColl.insert(doc);
+			//approvedPendingColl.insert(doc);
 
 		    } catch (ServiceException ex) {
 			System.err.println("Could not approve assignment " + assignmentId + ".");
-		    }
+			} 
 		  
-		} else {
+		} 
+		else if (percentageCorrect(workerid) >= percentagePartialThreshold) {
+
+		    try {
+			if (numSeen.keySet().contains(workerid)) {
+			    Double approvedSoFar = (numApproved.get(workerid).doubleValue()) / (numSeen.get(workerid).doubleValue());
+			    //System.out.println(workerid + "\t" + approvedSoFar);
+			    if (approvedSoFar <= percentageCorrect(workerid)) {
+				numApproved.put(workerid,numApproved.get(workerid)+1);
+				//System.out.println(workerid + "\ttrue" + percentageCorrect(workerid));
+				service.approveAssignment(assignmentId,approvalMessage);
+				System.out.println(workerid + "\tApproved\t" + percentageCorrect(workerid));
+			    } else {
+				//System.out.println(workerid + "\tfalse\t" + percentageCorrect(workerid));
+				service.rejectAssignment(assignmentId,rejectionMessage);
+				System.out.println(workerid + "\tRejected\t" + percentageCorrect(workerid));
+
+			    }
+			    submittedColl.remove(doc);
+			    numSeen.put(workerid,numSeen.get(workerid)+1);
+
+			} else {
+			    //approve first
+			    numSeen.put(workerid,1);
+			    numApproved.put(workerid,1);
+			    service.approveAssignment(assignmentId,approvalMessage);
+			    System.out.println(workerid + "\tApproved\t" + percentageCorrect(workerid));
+			    submittedColl.remove(doc);
+			}
+		    } catch (ServiceException ex) {
+			//System.err.println("Could not approve/reject assignment" + assignmentId + ".");
+		    }
+		}
+		else {
+		    
 		    //rejected
 		    
+		    
 		    try {
-			//service.rejectAssignment(assignmentId,rejectionMessage);
+			
+	
+			service.rejectAssignment(assignmentId,rejectionMessage);
 			submittedColl.remove(doc);
-
+			System.out.println(workerid + "\tRejected\t" + percentageCorrect(workerid));
 			rejectedPendingColl.insert(doc);
-
-			//uploadColl.insert(doc);
+			
+			uploadColl.insert(doc);
+			
 		    } catch (ServiceException ex) {
-			System.err.println("Could not reject assignment  " + assignmentId + ".");
-		    }
+			//System.err.println("Could not reject assignment  " + assignmentId + ".");
+			}
 		}				
 	    } 
 	}

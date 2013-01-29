@@ -65,15 +65,21 @@ public class HITPuller {
 
 	List<List<QuestionFormAnswersType.AnswerType>> results = new LinkedList<List<QuestionFormAnswersType.AnswerType>>();
 
+	int count = 0;
 	for (String hitId : hitIds) {
-	   
+
+
 	    List<List<QuestionFormAnswersType.AnswerType>> tmp = reviewAnswers(hitId);
 	    
+	   	    
 	    if (tmp != null) {
 		results.addAll(tmp);
 	    }
+
+	    count += 1;
+	    
+	    System.out.format("%d\t%s\n",count,hitId);
 	}
-	
 	populateDB(results);
    }
 
@@ -90,8 +96,11 @@ public class HITPuller {
 	DB db = m.getDB(db_name);
 	DBCollection coll = db.getCollection(submitted);
 
-
+	
 	for (List<QuestionFormAnswersType.AnswerType> answers : results) {
+
+
+	    
 	    BasicDBObject doc = new BasicDBObject();
 	    
 	    for (QuestionFormAnswersType.AnswerType answer : answers) {
@@ -117,6 +126,7 @@ public class HITPuller {
 	
 	List<List<QuestionFormAnswersType.AnswerType>> results = new LinkedList<List<QuestionFormAnswersType.AnswerType>>();
 
+	 
 
         try { 
 	    Assignment[] assignments = service.getAllAssignmentsForHIT(hitId);
@@ -125,7 +135,7 @@ public class HITPuller {
 	    for (Assignment assignment : assignments) {
 				
 		//hack to get approved hits
-		if (assignment.getAssignmentStatus() == AssignmentStatus.Approved) {
+		if (assignment.getAssignmentStatus() == AssignmentStatus.Submitted) {
 		    
 		    //By default, answers are specified in XML
 		    String answerXML = assignment.getAnswer();
